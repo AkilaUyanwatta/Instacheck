@@ -27,3 +27,5 @@ followers_1.json
 SKILL.md
 src/lib/instagram-export.ts
 following.json
+src/scripts/app.js
+.gitignore

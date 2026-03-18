@@ -55,7 +55,8 @@ function setActiveView(view) {
 
   document.querySelectorAll('[data-nav-link]').forEach((a) => {
     const v = a.getAttribute('data-nav-link');
-    a.toggleAttribute('aria-current', v === view);
+    if (v === view) a.setAttribute('aria-current', 'true');
+    else a.removeAttribute('aria-current');
   });
 }
 
@@ -105,6 +106,14 @@ async function run() {
   setActiveView(getViewFromHash());
   window.addEventListener('hashchange', () => setActiveView(getViewFromHash()));
 
+  document.querySelectorAll('[data-nav-link]').forEach((a) => {
+    a.addEventListener('click', () => {
+      const view = a.getAttribute('data-nav-link');
+      if (!view) return;
+      setActiveView(view);
+    });
+  });
+
   fileInput.addEventListener('change', async () => {
     setError('');
     setStatus('');
@@ -140,16 +149,6 @@ async function run() {
       setError(message);
       setStatus('');
     }
-  });
-
-  document.querySelectorAll('[data-nav-link]').forEach((a) => {
-    a.addEventListener('click', (e) => {
-      e.preventDefault();
-      const view = a.getAttribute('data-nav-link');
-      if (!view) return;
-      updateHash(view);
-      setActiveView(view);
-    });
   });
 }
 
