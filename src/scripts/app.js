@@ -1,4 +1,4 @@
-import { computeInstagramDiffs, parseInstagramExportZip } from '../lib/instagram-export.ts';
+import { computeInstagramDiffs, parseInstagramExportZip } from '../lib/instagram-export.js';
 
 const VIEW = {
   summary: 'summary',
