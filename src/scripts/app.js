@@ -21,18 +21,74 @@ function userUrl(user) {
   return `https://www.instagram.com/${encodeURIComponent(user.username)}/`;
 }
 
-function renderUserList(container, users) {
-  container.innerHTML = users
-    .map(
-      (u) => `
+const STATUS = ['open', 'in progress', 'on hold', 'attention required', 'done'];
+
+function storageKey(kind, username) {
+  return `instacheck:${kind}:${username.toLowerCase()}`;
+}
+
+function readStatus(kind, username) {
+  try {
+    const raw = localStorage.getItem(storageKey(kind, username));
+    if (!raw) return 'open';
+    if (STATUS.includes(raw)) return raw;
+  } catch {
+    // ignore
+  }
+  return 'open';
+}
+
+function writeStatus(kind, username, status) {
+  if (status === 'open') {
+    try {
+      localStorage.removeItem(storageKey(kind, username));
+    } catch {
+      // ignore
+    }
+    return;
+  }
+  try {
+    localStorage.setItem(storageKey(kind, username), status);
+  } catch {
+    // ignore
+  }
+}
+
+function renderUserList(container, users, kind) {
+  const itemsHtml = users
+    .map((u) => {
+      const current = readStatus(kind, u.username);
+      const options = STATUS.map((s) => {
+        const selected = s === current ? ' selected' : '';
+        return `<option value="${escapeHtml(s)}"${selected}>${escapeHtml(s)}</option>`;
+      }).join('');
+      return `
       <li class="user">
         <a class="user__link" href="${escapeHtml(userUrl(u))}" target="_blank" rel="noreferrer noopener">
           <span class="user__handle">@${escapeHtml(u.username)}</span>
         </a>
+        <select class="user__status" data-status-select data-kind="${escapeHtml(kind)}" data-username="${escapeHtml(
+        u.username,
+      )}">
+          ${options}
+        </select>
       </li>
-    `,
-    )
+    `;
+    })
     .join('');
+
+  container.innerHTML = itemsHtml;
+
+  container.querySelectorAll('[data-status-select]').forEach((el) => {
+    el.addEventListener('change', () => {
+      const select = el;
+      const kindAttr = select.getAttribute('data-kind');
+      const username = select.getAttribute('data-username');
+      const value = select.value;
+      if (!kindAttr || !username || !STATUS.includes(value)) return;
+      writeStatus(kindAttr, username, value);
+    });
+  });
 }
 
 function setError(message) {
@@ -134,9 +190,9 @@ async function run() {
         unfollowedCount: diffs.unfollowedUsers.length,
       });
 
-      renderUserList(notBackList, diffs.notFollowingBack);
-      renderUserList(fansList, diffs.fans);
-      renderUserList(unfollowedList, diffs.unfollowedUsers);
+      renderUserList(notBackList, diffs.notFollowingBack, 'not-following-back');
+      renderUserList(fansList, diffs.fans, 'fans');
+      renderUserList(unfollowedList, diffs.unfollowedUsers, 'unfollowed');
 
       resultsRoot.toggleAttribute('data-has-results', true);
       setStatus('Done.');
