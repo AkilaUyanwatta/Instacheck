@@ -22,3 +22,8 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+followers_1.json
+.gitignore
+SKILL.md
+src/lib/instagram-export.ts
+following.json
