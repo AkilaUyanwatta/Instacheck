@@ -34,8 +34,11 @@ const STATUS_LABELS = {
   done: 'Done',
 };
 
+const INSTACHECK_STORAGE_PREFIX = 'instacheck:';
+const LOCAL_STORAGE_EXPORT_VERSION = 1;
+
 function storageKey(kind, username) {
-  return `instacheck:${kind}:${username.toLowerCase()}`;
+  return `${INSTACHECK_STORAGE_PREFIX}${kind}:${username.toLowerCase()}`;
 }
 
 function readStatus(kind, username) {
@@ -65,6 +68,204 @@ function writeStatus(kind, username, status) {
   } catch {
     // ignore
   }
+}
+
+function isPlainRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getInstacheckStatusEntries() {
+  const entries = {};
+  const prefix = INSTACHECK_STORAGE_PREFIX;
+
+  let length;
+  try {
+    length = localStorage.length;
+  } catch (cause) {
+    throw new Error('Could not access localStorage.', { cause });
+  }
+
+  for (let i = 0; i < length; i++) {
+    let key;
+    try {
+      key = localStorage.key(i);
+    } catch (cause) {
+      throw new Error('Could not enumerate localStorage keys.', { cause });
+    }
+
+    if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
+
+    let value;
+    try {
+      value = localStorage.getItem(key);
+    } catch (cause) {
+      throw new Error(`Could not read localStorage item: ${key}`, { cause });
+    }
+
+    if (typeof value === 'string') entries[key] = value;
+  }
+
+  return entries;
+}
+
+function downloadJson(filename, payload) {
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function extractEntriesFromExportPayload(payload) {
+  if (!isPlainRecord(payload)) {
+    throw new Error('Invalid import payload: expected a JSON object.');
+  }
+
+  if (isPlainRecord(payload.entries)) return payload.entries;
+
+  // Tolerate a few alternative shapes (in case users paste JSON manually).
+  if (isPlainRecord(payload.data)) return payload.data;
+
+  const keys = Object.keys(payload);
+  if (keys.length > 0 && keys.every((k) => k.startsWith(INSTACHECK_STORAGE_PREFIX))) return payload;
+
+  throw new Error('Unsupported import payload: expected an `entries` object with instacheck keys.');
+}
+
+function parseInstacheckExportPayload(rawText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (cause) {
+    throw new Error('Invalid JSON import.', { cause });
+  }
+
+  const entries = extractEntriesFromExportPayload(parsed);
+  if (!isPlainRecord(entries)) {
+    throw new Error('Invalid import payload: `entries` must be an object.');
+  }
+
+  return entries;
+}
+
+function parseInstacheckStorageKey(key) {
+  if (typeof key !== 'string' || !key.startsWith(INSTACHECK_STORAGE_PREFIX)) return null;
+  const rest = key.slice(INSTACHECK_STORAGE_PREFIX.length);
+  const parts = rest.split(':');
+  if (parts.length !== 2) return null;
+
+  const [kind, usernameRaw] = parts;
+  if (!kind || !usernameRaw) return null;
+
+  return { kind, username: usernameRaw.toLowerCase() };
+}
+
+function removeInstacheckStatusEntries() {
+  const prefix = INSTACHECK_STORAGE_PREFIX;
+  let removedCount = 0;
+
+  let length;
+  try {
+    length = localStorage.length;
+  } catch (cause) {
+    throw new Error('Could not access localStorage.', { cause });
+  }
+
+  // Iterate backwards: safe while mutating localStorage.
+  for (let i = length - 1; i >= 0; i--) {
+    let key;
+    try {
+      key = localStorage.key(i);
+    } catch (cause) {
+      throw new Error('Could not enumerate localStorage keys.', { cause });
+    }
+
+    if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
+
+    try {
+      localStorage.removeItem(key);
+      removedCount += 1;
+    } catch (cause) {
+      throw new Error(`Could not remove localStorage item: ${key}`, { cause });
+    }
+  }
+
+  return removedCount;
+}
+
+function buildInstacheckImportOperations(entries) {
+  const operations = [];
+  const invalidReasons = [];
+
+  for (const [key, value] of Object.entries(entries)) {
+    if (typeof value !== 'string') {
+      invalidReasons.push(`non-string value for ${key}`);
+      continue;
+    }
+
+    const parsedKey = parseInstacheckStorageKey(key);
+    if (!parsedKey) {
+      invalidReasons.push(`invalid storage key ${key}`);
+      continue;
+    }
+
+    const normalizedStatus = STATUS_ALIASES[value] ?? value;
+    if (!STATUS.includes(normalizedStatus)) {
+      invalidReasons.push(`invalid status "${value}" for ${key}`);
+      continue;
+    }
+
+    operations.push({
+      kind: parsedKey.kind,
+      username: parsedKey.username,
+      status: normalizedStatus,
+    });
+  }
+
+  if (invalidReasons.length > 0) {
+    throw new Error(
+      `Import contains invalid entries (${invalidReasons.length}). Example: ${invalidReasons[0]}.`,
+    );
+  }
+
+  return operations;
+}
+
+function importInstacheckStatusEntries(entries, { replaceExisting }) {
+  const operations = buildInstacheckImportOperations(entries);
+  const removedExistingCount = replaceExisting ? removeInstacheckStatusEntries() : 0;
+
+  for (const op of operations) {
+    writeStatus(op.kind, op.username, op.status);
+  }
+
+  return { importedCount: operations.length, removedExistingCount };
+}
+
+function refreshAllStatusWidgets() {
+  document.querySelectorAll('.status').forEach((statusRoot) => {
+    const kind = statusRoot.getAttribute('data-kind');
+    const username = statusRoot.getAttribute('data-username');
+    if (!kind || !username) return;
+
+    const current = readStatus(kind, username);
+    statusRoot.setAttribute('data-status', current);
+
+    const labelEl = statusRoot.querySelector('.status__label');
+    if (labelEl) labelEl.textContent = STATUS_LABELS[current] ?? current;
+
+    statusRoot.querySelectorAll('[data-status-option]').forEach((optionBtn) => {
+      const option = optionBtn.getAttribute('data-status-option');
+      optionBtn.setAttribute('aria-selected', String(option === current));
+    });
+  });
 }
 
 function renderUserList(container, users, kind) {
@@ -166,6 +367,11 @@ async function run() {
 
   if (!fileInput || !resultsRoot || !notBackList || !fansList || !unfollowedList) return;
 
+  const exportMapButton = document.querySelector('button[data-export-map]');
+  const importMapFileInput = document.querySelector('input[type="file"][data-import-map-file-input]');
+  const importMapFromTextButton = document.querySelector('button[data-import-map-from-text]');
+  const importMapReplaceCheckbox = document.querySelector('input[type="checkbox"][data-import-map-replace-checkbox]');
+
   setActiveView(getViewFromHash());
   window.addEventListener('hashchange', () => setActiveView(getViewFromHash()));
 
@@ -175,6 +381,73 @@ async function run() {
     });
     document.querySelectorAll('[data-status-current]').forEach((btn) => {
       btn.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  if (exportMapButton) {
+    exportMapButton.addEventListener('click', () => {
+      setError('');
+      try {
+        setStatus('Preparing export...');
+
+        const entries = getInstacheckStatusEntries();
+        const entryCount = Object.keys(entries).length;
+
+        const now = new Date();
+        const datePart = now.toISOString().slice(0, 10);
+        const filename = `instacheck-status-map-${datePart}.json`;
+
+        downloadJson(filename, {
+          version: LOCAL_STORAGE_EXPORT_VERSION,
+          prefix: INSTACHECK_STORAGE_PREFIX,
+          exportedAt: now.toISOString(),
+          entries,
+        });
+
+        setStatus(`Exported ${entryCount} status entr${entryCount === 1 ? 'y' : 'ies'}.`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        setStatus('');
+      }
+    });
+  }
+
+  if (importMapFileInput) {
+    importMapFileInput.addEventListener('change', async () => {
+      setError('');
+      setStatus('');
+
+      const file = importMapFileInput.files?.[0];
+      if (!file) return;
+
+      try {
+        setStatus('Reading import JSON...');
+
+        const rawText = await file.text();
+        const entries = parseInstacheckExportPayload(rawText);
+        const replaceExisting = importMapReplaceCheckbox?.checked ?? true;
+
+        const { importedCount } = importInstacheckStatusEntries(entries, { replaceExisting });
+        refreshAllStatusWidgets();
+        closeAllStatusMenus();
+
+        importMapFileInput.value = '';
+        setStatus(`Imported ${importedCount} status entr${importedCount === 1 ? 'y' : 'ies'}.`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        setStatus('');
+      }
+    });
+  }
+
+  if (importMapFromTextButton && importMapFileInput) {
+    importMapFromTextButton.addEventListener('click', () => {
+      // Reuse the file picker flow.
+      setError('');
+      setStatus('');
+      importMapFileInput.click();
     });
   }
 

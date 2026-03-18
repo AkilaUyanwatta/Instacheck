@@ -35,6 +35,38 @@
 					<div class="drop__status" data-status></div>
 					<div class="drop__error" data-error></div>
 				</div>
+
+				<div class="exchange" data-exchange>
+					<div class="exchange__title">Status export/import</div>
+
+					<div class="exchange__actions">
+						<button type="button" class="exchange__btn" data-export-map>
+							Export
+						</button>
+
+						<label class="exchange__btn exchange__btn--secondary">
+							Import file
+							<input data-import-map-file-input type="file" accept="application/json,.json" hidden />
+						</label>
+					</div>
+
+					<div class="exchange__import">
+						<label class="exchange__replace">
+							<input type="checkbox" data-import-map-replace-checkbox checked />
+							<span>Replace existing `instacheck:` status</span>
+						</label>
+
+						<div class="exchange__text">
+							<button
+								type="button"
+								class="exchange__btn exchange__btn--secondary"
+								data-import-map-from-text
+							>
+								Select JSON file
+							</button>
+						</div>
+					</div>
+				</div>
 			</header>
 
 			<section class="results" data-results>
@@ -283,6 +315,88 @@
 
 	.drop__error[data-has-error] {
 		display: block;
+	}
+
+	.exchange {
+		margin-top: 16px;
+		padding: 14px;
+		background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-radius: var(--radius2);
+		box-shadow: var(--shadow);
+		backdrop-filter: blur(10px);
+	}
+
+	.exchange__title {
+		font-weight: 760;
+		letter-spacing: -0.03em;
+		margin-bottom: 10px;
+	}
+
+	.exchange__actions {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 10px;
+	}
+
+	.exchange__btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 10px;
+		padding: 12px 14px;
+		border-radius: 16px;
+		background: linear-gradient(135deg, rgba(82, 255, 213, 0.14), rgba(255, 77, 216, 0.12));
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		font-weight: 700;
+		letter-spacing: -0.02em;
+		cursor: pointer;
+	}
+
+	.exchange__btn--secondary {
+		background: rgba(255, 255, 255, 0.04);
+		border-color: rgba(255, 255, 255, 0.12);
+	}
+
+	.exchange__import {
+		margin-top: 12px;
+		display: grid;
+		gap: 10px;
+	}
+
+	.exchange__replace {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		color: rgba(255, 255, 255, 0.75);
+	}
+
+	.exchange__replace input {
+		accent-color: var(--accent);
+	}
+
+	.exchange__text {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		gap: 10px;
+	}
+
+	.exchange__text textarea {
+		width: 100%;
+		color: rgba(255, 255, 255, 0.9);
+		background: rgba(0, 0, 0, 0.2);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-radius: 16px;
+		padding: 12px 14px;
+		font-family: var(--mono);
+		resize: vertical;
+	}
+
+	@media (max-width: 680px) {
+		.exchange__text {
+			grid-template-columns: 1fr;
+		}
 	}
 
 	.results {
