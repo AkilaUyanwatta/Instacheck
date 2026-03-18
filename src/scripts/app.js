@@ -21,7 +21,18 @@ function userUrl(user) {
   return `https://www.instagram.com/${encodeURIComponent(user.username)}/`;
 }
 
-const STATUS = ['open', 'in progress', 'on hold', 'attention required', 'done'];
+const STATUS = ['open', 'in progress', 'on hold', 'attention requred', 'done'];
+const STATUS_ALIASES = {
+  'attention required': 'attention requred',
+};
+
+const STATUS_LABELS = {
+  open: 'Open',
+  'in progress': 'In progress',
+  'on hold': 'On hold',
+  'attention requred': 'Attention required',
+  done: 'Done',
+};
 
 function storageKey(kind, username) {
   return `instacheck:${kind}:${username.toLowerCase()}`;
@@ -31,7 +42,8 @@ function readStatus(kind, username) {
   try {
     const raw = localStorage.getItem(storageKey(kind, username));
     if (!raw) return 'open';
-    if (STATUS.includes(raw)) return raw;
+    const normalized = STATUS_ALIASES[raw] ?? raw;
+    if (STATUS.includes(normalized)) return normalized;
   } catch {
     // ignore
   }
@@ -39,7 +51,8 @@ function readStatus(kind, username) {
 }
 
 function writeStatus(kind, username, status) {
-  if (status === 'open') {
+  const normalized = STATUS_ALIASES[status] ?? status;
+  if (normalized === 'open') {
     try {
       localStorage.removeItem(storageKey(kind, username));
     } catch {
@@ -48,7 +61,7 @@ function writeStatus(kind, username, status) {
     return;
   }
   try {
-    localStorage.setItem(storageKey(kind, username), status);
+    localStorage.setItem(storageKey(kind, username), normalized);
   } catch {
     // ignore
   }
@@ -58,37 +71,31 @@ function renderUserList(container, users, kind) {
   const itemsHtml = users
     .map((u) => {
       const current = readStatus(kind, u.username);
-      const options = STATUS.map((s) => {
-        const selected = s === current ? ' selected' : '';
-        return `<option value="${escapeHtml(s)}"${selected}>${escapeHtml(s)}</option>`;
-      }).join('');
       return `
       <li class="user">
         <a class="user__link" href="${escapeHtml(userUrl(u))}" target="_blank" rel="noreferrer noopener">
           <span class="user__handle">@${escapeHtml(u.username)}</span>
         </a>
-        <select class="user__status" data-status-select data-kind="${escapeHtml(kind)}" data-username="${escapeHtml(
-        u.username,
-      )}">
-          ${options}
-        </select>
+        <div class="status" data-kind="${escapeHtml(kind)}" data-username="${escapeHtml(u.username)}" data-status="${escapeHtml(current)}">
+          <button type="button" class="status__current" data-status-current aria-haspopup="listbox" aria-expanded="false">
+            <span class="status__label">${escapeHtml(STATUS_LABELS[current] ?? current)}</span>
+            <span class="status__caret" aria-hidden="true"></span>
+          </button>
+          <div class="status__menu" role="listbox" aria-label="Status" hidden>
+            ${STATUS.map((s) => {
+              const selected = s === current ? 'true' : 'false';
+              return `<button type="button" class="status__option" role="option" aria-selected="${selected}" data-status-option="${escapeHtml(s)}">${escapeHtml(
+                STATUS_LABELS[s] ?? s,
+              )}</button>`;
+            }).join('')}
+          </div>
+        </div>
       </li>
     `;
     })
     .join('');
 
   container.innerHTML = itemsHtml;
-
-  container.querySelectorAll('[data-status-select]').forEach((el) => {
-    el.addEventListener('change', () => {
-      const select = el;
-      const kindAttr = select.getAttribute('data-kind');
-      const username = select.getAttribute('data-username');
-      const value = select.value;
-      if (!kindAttr || !username || !STATUS.includes(value)) return;
-      writeStatus(kindAttr, username, value);
-    });
-  });
 }
 
 function setError(message) {
@@ -162,12 +169,76 @@ async function run() {
   setActiveView(getViewFromHash());
   window.addEventListener('hashchange', () => setActiveView(getViewFromHash()));
 
-  document.querySelectorAll('[data-nav-link]').forEach((a) => {
-    a.addEventListener('click', () => {
-      const view = a.getAttribute('data-nav-link');
-      if (!view) return;
-      setActiveView(view);
+  function closeAllStatusMenus() {
+    document.querySelectorAll('.status__menu').forEach((menu) => {
+      menu.hidden = true;
     });
+    document.querySelectorAll('[data-status-current]').forEach((btn) => {
+      btn.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  document.addEventListener('click', (e) => {
+    const statusRoot = e.target.closest('.status');
+    if (!statusRoot) closeAllStatusMenus();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAllStatusMenus();
+  });
+
+  document.addEventListener('click', (e) => {
+    const currentBtn = e.target.closest('[data-status-current]');
+    if (currentBtn) {
+      const root = currentBtn.closest('.status');
+      if (!root) return;
+
+      const menu = root.querySelector('.status__menu');
+      if (!menu) return;
+
+      const isCurrentlyOpen = !menu.hidden;
+      closeAllStatusMenus();
+      if (!isCurrentlyOpen) {
+        menu.hidden = false;
+        currentBtn.setAttribute('aria-expanded', 'true');
+      } else {
+        currentBtn.setAttribute('aria-expanded', 'false');
+      }
+      e.stopPropagation();
+      return;
+    }
+
+    const optionBtn = e.target.closest('[data-status-option]');
+    if (optionBtn) {
+      const root = optionBtn.closest('.status');
+      if (!root) return;
+      const kind = root.getAttribute('data-kind');
+      const username = root.getAttribute('data-username');
+      const nextStatusRaw = optionBtn.getAttribute('data-status-option');
+      if (!kind || !username || !nextStatusRaw) return;
+
+      const nextStatus = STATUS_ALIASES[nextStatusRaw] ?? nextStatusRaw;
+      if (!STATUS.includes(nextStatus)) return;
+
+      writeStatus(kind, username, nextStatus);
+
+      root.setAttribute('data-status', nextStatus);
+      const labelEl = root.querySelector('.status__label');
+      if (labelEl) labelEl.textContent = STATUS_LABELS[nextStatus] ?? nextStatus;
+
+      // Close menu and update ARIA selected states
+      closeAllStatusMenus();
+
+      const menu = root.querySelector('.status__menu');
+      if (menu) {
+        menu.querySelectorAll('[data-status-option]').forEach((btn) => {
+          const v = btn.getAttribute('data-status-option');
+          btn.setAttribute('aria-selected', String(v === nextStatus));
+        });
+      }
+
+      e.stopPropagation();
+    }
   });
 
   fileInput.addEventListener('change', async () => {
