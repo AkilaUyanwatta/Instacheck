@@ -115,6 +115,51 @@ function toUniqueByUsername(users) {
   );
 }
 
+function parseInstagramUsersFromConnectionHtml(html) {
+  // HTML lists contain many links like:
+  // - https://www.instagram.com/<username>
+  // - https://www.instagram.com/_u/<username> (found in following.html exports)
+  // Capture only valid handle characters to avoid trailing markup artifacts like `<`.
+  const hrefPattern = /https?:\/\/(?:www\.)?instagram\.com\/(?:_u\/)?([A-Za-z0-9._]+)/g;
+  const usernames = new Set();
+
+  let match;
+  while ((match = hrefPattern.exec(html))) {
+    const username = match[1];
+    if (!username) continue;
+    const normalized = normalizeUsername(username);
+    if (!normalized) continue;
+    usernames.add(normalized);
+  }
+
+  const users = [];
+  for (const username of usernames) {
+    users.push({ username, href: `https://www.instagram.com/${encodeURIComponent(username)}/` });
+  }
+
+  return users.sort((a, b) => a.username.localeCompare(b.username, undefined, { sensitivity: 'base' }));
+}
+
+function parseFollowersHtml(raw) {
+  if (typeof raw !== 'string') return { ok: false, error: new Error('followers_1.html: expected HTML string') };
+  const users = parseInstagramUsersFromConnectionHtml(raw);
+  if (users.length === 0) return { ok: false, error: new Error('followers_1.html: no users found (unexpected html)') };
+  return { ok: true, value: users };
+}
+
+function parseFollowingHtml(raw) {
+  if (typeof raw !== 'string') return { ok: false, error: new Error('following.html: expected HTML string') };
+  const users = parseInstagramUsersFromConnectionHtml(raw);
+  if (users.length === 0) return { ok: false, error: new Error('following.html: no users found (unexpected html)') };
+  return { ok: true, value: users };
+}
+
+function parseUnfollowedUsersHtml(raw) {
+  if (typeof raw !== 'string') return { ok: false, error: new Error('recently_unfollowed_profiles.html: expected HTML string') };
+  const users = parseInstagramUsersFromConnectionHtml(raw);
+  return { ok: true, value: users };
+}
+
 function findZipFile(zip, expectedPathSuffix) {
   const normalizedSuffix = expectedPathSuffix.replace(/\\/g, '/');
   const candidates = Object.keys(zip.files).filter((p) => p.replace(/\\/g, '/').endsWith(normalizedSuffix));
@@ -124,6 +169,20 @@ function findZipFile(zip, expectedPathSuffix) {
   // Prefer the canonical Instagram export location if multiple matches exist.
   const preferred = candidates.find((p) => p.replace(/\\/g, '/').includes('/connections/followers_and_following/'));
   return preferred ?? candidates[0];
+}
+
+function findZipFileAnySuffix(zip, expectedPathSuffixes) {
+  for (const suffix of expectedPathSuffixes) {
+    const match = findZipFile(zip, suffix);
+    if (match) return match;
+  }
+  return null;
+}
+
+async function readZipText(zip, path) {
+  const file = zip.file(path);
+  if (!file) throw new Error(`Missing file in zip: ${path}`);
+  return file.async('text');
 }
 
 async function readZipJson(zip, path) {
@@ -149,37 +208,68 @@ export async function parseInstagramExportZip(file) {
     throw new Error('Could not read ZIP. Is the file a valid .zip?', { cause });
   }
 
-  const followersPath = findZipFile(zip, 'connections/followers_and_following/followers_1.json');
-  const followingPath = findZipFile(zip, 'connections/followers_and_following/following.json');
-  const unfollowedPath =
-    findZipFile(zip, 'connections/followers_and_following/recently_unfollowed_profiles.json') ??
-    findZipFile(zip, 'recently_unfollowed_profiles.json');
+  // Instagram export structure can vary. Prefer the canonical path but fall back
+  // to alternative suffixes when `connections/` isn't present.
+  const followersPath = findZipFileAnySuffix(zip, [
+    'connections/followers_and_following/followers_1.json',
+    'connections/followers_and_following/followers_1.html',
+    'followers_and_following/followers_1.json',
+    'followers_and_following/followers_1.html',
+    'followers_1.json',
+    'followers_1.html',
+  ]);
+  const followingPath = findZipFileAnySuffix(zip, [
+    'connections/followers_and_following/following.json',
+    'connections/followers_and_following/following.html',
+    'followers_and_following/following.json',
+    'followers_and_following/following.html',
+    'following.json',
+    'following.html',
+  ]);
+  const unfollowedPath = findZipFileAnySuffix(zip, [
+    'connections/followers_and_following/recently_unfollowed_profiles.json',
+    'connections/followers_and_following/recently_unfollowed_profiles.html',
+    'followers_and_following/recently_unfollowed_profiles.json',
+    'followers_and_following/recently_unfollowed_profiles.html',
+    'recently_unfollowed_profiles.json',
+    'recently_unfollowed_profiles.html',
+  ]);
 
   if (!followersPath || !followingPath) {
     const available = Object.keys(zip.files)
       .map((p) => p.replace(/\\/g, '/'))
-      .filter((p) => p.endsWith('.json'))
+      .filter((p) => p.endsWith('.json') || p.endsWith('.html'))
       .slice(0, 30);
     throw new Error(
-      `Could not find required files under connections/followers_and_following/. ` +
-        `Expected followers_1.json and following.json. ` +
+      `Could not find required files for followers diff. ` +
+        `Expected followers_1.(json|html) and following.(json|html) (in connections/followers_and_following/ or equivalent). ` +
         (available.length
-          ? `Found JSON files (first 30): ${available.join(', ')}`
-          : 'No JSON files found.'),
+          ? `Found JSON/HTML files (first 30): ${available.join(', ')}`
+          : 'No JSON/HTML files found.'),
     );
   }
 
-  const followersRaw = await readZipJson(zip, followersPath);
-  const followingRaw = await readZipJson(zip, followingPath);
-  const unfollowedRaw = unfollowedPath ? await readZipJson(zip, unfollowedPath) : null;
+  const followersRaw = followersPath.endsWith('.html') ? await readZipText(zip, followersPath) : await readZipJson(zip, followersPath);
+  const followingRaw = followingPath.endsWith('.html') ? await readZipText(zip, followingPath) : await readZipJson(zip, followingPath);
+  const unfollowedRaw = unfollowedPath
+    ? unfollowedPath.endsWith('.html')
+      ? await readZipText(zip, unfollowedPath)
+      : await readZipJson(zip, unfollowedPath)
+    : null;
 
-  const followersParsed = parseFollowersJson(followersRaw);
+  const followersParsed = followersPath.endsWith('.html') ? parseFollowersHtml(followersRaw) : parseFollowersJson(followersRaw);
   if (!followersParsed.ok) throw followersParsed.error;
 
-  const followingParsed = parseFollowingJson(followingRaw);
+  const followingParsed = followingPath.endsWith('.html') ? parseFollowingHtml(followingRaw) : parseFollowingJson(followingRaw);
   if (!followingParsed.ok) throw followingParsed.error;
 
-  const unfollowedParsed = parseUnfollowedUsersJson(unfollowedRaw ?? followingRaw);
+  const unfollowedParsed = unfollowedPath
+    ? unfollowedPath.endsWith('.html')
+      ? parseUnfollowedUsersHtml(unfollowedRaw)
+      : parseUnfollowedUsersJson(unfollowedRaw)
+    : followingPath.endsWith('.html')
+      ? parseUnfollowedUsersHtml(followingRaw)
+      : parseUnfollowedUsersJson(followingRaw);
   if (!unfollowedParsed.ok) throw unfollowedParsed.error;
 
   return {

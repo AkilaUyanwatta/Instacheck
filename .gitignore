@@ -29,3 +29,7 @@ src/lib/instagram-export.ts
 following.json
 src/scripts/app.js
 .gitignore
+followers_1.html
+.gitignore
+recently_unfollowed_profiles.html
+following.html
